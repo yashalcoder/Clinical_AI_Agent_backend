@@ -1,0 +1,13 @@
+# Use this workspace to collaborate
+workspace:
+  id: d8538a4e-76df-46c1-9d70-13fce811be99
+
+cloudResources:
+  collections:
+    ..\postman\collections\ClinicFlow AI: 03483f36-90ae-4dd9-9cac-e67043853fb7
+
+# All resources in the `postman/` folder are automatically registered in Local View.
+# Point to additional files outside the `postman/` folder to register them individually. Example:
+#localResources:
+#  collections:
+#    - ../tests/E2E Test Collection/

@@ -24,9 +24,9 @@ class Reminder(Base):
 
     id             = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     appointment_id = Column(UUID(as_uuid=True), ForeignKey("appointments.id", ondelete="CASCADE"), nullable=False)
-    type           = Column(SAEnum(ReminderType), nullable=False)
-    channel        = Column(SAEnum(ReminderChannel), default=ReminderChannel.whatsapp)
-    status         = Column(SAEnum(ReminderStatus), default=ReminderStatus.pending)
+    type           = Column(SAEnum(ReminderType,    values_callable=lambda x: [e.value for e in x]), nullable=False)
+    channel        = Column(SAEnum(ReminderChannel, values_callable=lambda x: [e.value for e in x]), default=ReminderChannel.whatsapp)
+    status         = Column(SAEnum(ReminderStatus,  values_callable=lambda x: [e.value for e in x]), default=ReminderStatus.pending)
     scheduled_at   = Column(DateTime(timezone=True), nullable=False)
     sent_at        = Column(DateTime(timezone=True))
     error_message  = Column(String)
