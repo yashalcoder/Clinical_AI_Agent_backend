@@ -1,7 +1,7 @@
 import stripe
 
 from PaymentProvider import PaymentProvider
-from server.app import core
+from app import core
 from cryptography.fernet import Fernet
 cipher = Fernet(core.config.ENCRYPTION_KEY)
 class StripePayment(PaymentProvider):

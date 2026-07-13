@@ -14,7 +14,7 @@ from app.database import db
 from app.models import Clinic
 from cryptography.fernet import Fernet
 
-from server.app import core
+from app import core
 cipher = Fernet(core.config.ENCRYPTION_KEY)
 class PaymentProvider:
     def __init__(self, name):
