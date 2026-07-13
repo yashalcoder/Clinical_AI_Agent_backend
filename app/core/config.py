@@ -22,7 +22,7 @@ class Settings(BaseSettings):
 
     # OpenAI
     OPENAI_API_KEY:              str = ""
-    
+    ENCRYPTION_KEY:                 str = ""
     #assembly AI(STT)
     ASSEMBLYAI_API_KEY: str = ""
     # App
