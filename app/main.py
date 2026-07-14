@@ -5,7 +5,7 @@ from sqlalchemy import text
 from app.core.config import settings
 from app.database import engine
 from app.routes import appointments, auth
-from app.routes import auth, patients, doctors, voice
+from app.routes import auth, patients, doctors
 app = FastAPI(
     title=settings.APP_NAME,
     version="1.0.0",
@@ -37,7 +37,7 @@ app.include_router(auth.router,     prefix="/api/auth",     tags=["Auth"])
 app.include_router(patients.router, prefix="/api/patients", tags=["Patients"])
 app.include_router(doctors.router,  prefix="/api/doctors",  tags=["Doctors"])
 app.include_router(appointments.router, prefix="/api/appointments", tags=["Appointments"])  # ← add
-app.include_router(voice.router, prefix="/api/voice", tags=["Voice"])
+# app.include_router(voice.router, prefix="/api/voice", tags=["Voice"])
 
 # Sab routes include karo
 # app.include_router(auth.router,         prefix="/api/auth",         tags=["Auth"])
