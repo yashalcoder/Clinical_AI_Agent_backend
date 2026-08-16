@@ -6,7 +6,8 @@ from app.models.user import UserRole
 
 class RegisterRequest(BaseModel):
     email:     EmailStr
-    full_name: str
+    firstName: str
+    lastName: Optional[str] = None
     phone:     str
     password:  str
     role:      UserRole
@@ -19,7 +20,6 @@ class LoginRequest(BaseModel):
 
 class TokenResponse(BaseModel):
     access_token:  str
-    token_type:    str = "bearer"
     role:          UserRole
     user_id:       UUID
     full_name:     str

@@ -47,35 +47,83 @@ def create_role_profile(user: User, db: Session):
 # ════════════════════════════════════
 # EMAIL AUTH ROUTES
 # ════════════════════════════════════
+from sqlalchemy.exc import IntegrityError
 
-# POST /api/auth/register
-@router.post("/register", response_model=UserResponse, status_code=201)
+VALID_ROLES = {"patient", "doctor"}  # keep in sync with your schema/enum
+
+@router.post("/register", response_model=TokenResponse, status_code=201)
 def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     """Email se naya user register karo"""
 
-    # Email already hai?
-    if db.query(User).filter(User.email == payload.email).first():
+    # --- Normalize inputs ---
+    email = payload.email.strip().lower()
+    first_name = payload.firstName.strip()
+    last_name = (payload.lastName or "").strip()
+    role = (payload.role or "").strip().lower()
+    phone = (payload.phone or "").strip()
+
+    # --- Basic field validation ---
+    if not first_name:
+        raise HTTPException(status_code=400, detail="First name is required")
+
+    if role not in VALID_ROLES:
+        raise HTTPException(status_code=400, detail="Invalid account role")
+
+    if len(payload.password) < 8:
+        raise HTTPException(
+            status_code=400, detail="Password must be at least 8 characters"
+        )
+
+    # --- Duplicate email check (pre-check, not fully race-safe on its own) ---
+    if db.query(User).filter(User.email == email).first():
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    # User banao
+    # --- Optional: duplicate phone check ---
+    if phone and db.query(User).filter(User.phone == phone).first():
+        raise HTTPException(status_code=400, detail="Phone number already registered")
+    first_name = payload.firstName.strip()
+    last_name = (payload.lastName or "").strip()
+    full_name = f"{first_name} {last_name}".strip()
     user = User(
-        email=payload.email,
-        full_name=payload.full_name,
-        phone=payload.phone,
-        role=payload.role,
+        email=email,
+        full_name=full_name,
+        phone=phone,
+        role=role,
         password=hash_password(payload.password),
-        auth_provider="email"
+        auth_provider="email",
     )
-    db.add(user)
-    db.flush()
 
-    # Role profile banao
-    create_role_profile(user, db)
+    try:
+        db.add(user)
+        db.flush()
 
-    db.commit()
+        # Role profile banao
+        create_role_profile(user, db)
+
+        db.commit()
+    except IntegrityError:
+        # Handles race condition: two concurrent signups with same email
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Email already registered")
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=500, detail="Could not create account, please try again"
+        )
+
     db.refresh(user)
-    return user
 
+    token = create_access_token(
+        data={"sub": str(user.id), "role": user.role, "email": user.email}
+    )
+    return TokenResponse(
+        access_token=token,
+        role=user.role,
+        user_id=user.id,
+        full_name=user.full_name,
+        is_new_user=True
+        # picture=user.picture
+    )
 
 # POST /api/auth/login
 @router.post("/login", response_model=TokenResponse)
@@ -121,115 +169,130 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
 # ════════════════════════════════════
 
 # GET /api/auth/google
+# GET /api/auth/google
 @router.get("/google")
-def google_login():
-    """
-    Google login page pe redirect karo
-    Frontend yeh URL call kare jab user
-    'Login with Google' click kare
-    """
-    # CSRF protection ke liye random state
-    state = secrets.token_urlsafe(32)
+def google_login(
+    role: str = Query("patient"),
+    origin: str = Query("signup")  # "signup" ya "login"
+):
+    if role not in ("patient", "clinic"):
+        role = "patient"
+    if origin not in ("signup", "login"):
+        origin = "signup"
 
-    # Google ka auth URL banao
+    # state mein role + origin dono pack karo
+    raw_token = secrets.token_urlsafe(16)
+    state = f"{raw_token}:{role}:{origin}"
+
     auth_url = get_google_auth_url(state=state)
-
-    # User ko Google pe bhejo
     return RedirectResponse(url=auth_url)
-
-
+import logging
+logger = logging.getLogger(__name__)
 # GET /api/auth/google/callback
+
 @router.get("/google/callback")
 async def google_callback(
-    code:  str = Query(..., description="Google ka auth code"),
-    state: str = Query(..., description="CSRF state"),
+    code:  str = Query(...),
+    state: str = Query(...),
     db:    Session = Depends(get_db)
 ):
-    """
-    Google yahan wapas aata hai code ke saath
-    
-    Flow:
-    code → access_token → user_info → JWT → frontend redirect
-    """
+    # State parse karo pehle hi — taaki error case mein bhi origin pata ho
+    try:
+        _, intended_role, origin = state.split(":", 2)
+        if intended_role not in ("patient", "doctor"):
+            intended_role = "patient"
+        if origin not in ("signup", "login"):
+            origin = "signup"
+    except ValueError:
+        intended_role = "patient"
+        origin = "signup"
+
+    error_redirect_path = "/signup" if origin == "signup" else "/login"
 
     try:
-        # 1. Code se access_token lo
         token_data   = await exchange_code_for_token(code)
         access_token = token_data.get("access_token")
 
         if not access_token:
             raise HTTPException(status_code=400, detail="Google token exchange failed")
 
-        # 2. access_token se user info lo
         google_user = await get_google_user_info(access_token)
-
-        email     = google_user["email"]
+        email     = google_user["email"].strip().lower()
         full_name = google_user["full_name"]
         google_id = google_user["google_id"]
         picture   = google_user["picture"]
 
-        # 3. Email verified check
         if not google_user.get("email_verified"):
             raise HTTPException(status_code=400, detail="Google email not verified")
 
-        # 4. User already DB mein hai?
         user = db.query(User).filter(User.email == email).first()
-        is_new_user = False
 
         if not user:
-            # 5. Naya user — register karo
-            is_new_user = True
+            # Account exist nahi karta
+            if origin == "login":
+                # Login page se try kiya, lekin koi account hai hi nahi — signup karne bhejo
+                return RedirectResponse(
+                    url=f"{settings.FRONTEND_URL}/login?error=account_not_found"
+                )
+
+            # Signup flow — naya user banao (role signup page se explicitly aaya hai)
             user = User(
                 email=email,
                 full_name=full_name,
                 google_id=google_id,
                 picture=picture,
-                role=UserRole.patient,    # default — frontend role screen dikhayega
+                role=intended_role,
                 auth_provider="google",
                 is_active=True,
-                password=None             # Google user ka password nahi hota
+                password=None
             )
             db.add(user)
             db.flush()
 
-            # Default patient row banao
-            db.add(Patient(user_id=user.id))
+            if intended_role == "doctor":
+                db.add(Doctor(user_id=user.id, specialization="General"))
+            else:
+                db.add(Patient(user_id=user.id))
+
             db.commit()
             db.refresh(user)
 
         else:
-            # 6. Existing user — google_id aur picture update karo
+            # Existing user mila — chahe email se bana ho ya google se, ab link/refresh karo
+            if not user.is_active:
+                return RedirectResponse(url=f"{settings.FRONTEND_URL}{error_redirect_path}?error=account_deactivated")
+
+            # Google ne is email ko verify kar diya hai, isliye safely link kar sakte hain
             user.google_id = google_id
             user.picture   = picture
+
             db.commit()
             db.refresh(user)
 
-        # 7. JWT token banao (same jo email login pe banta hai)
         jwt_token = create_access_token(data={
-            "sub":   str(user.id),
-            "role":  user.role,
-            "email": user.email
+            "sub": str(user.id), "role": user.role, "email": user.email
         })
 
-        # 8. Frontend ko redirect karo
-        # is_new_user=true ho to frontend role select screen dikhaye
         redirect_url = (
             f"{settings.FRONTEND_URL}/auth/callback"
-            f"?token={jwt_token}"
-            f"&role={user.role}"
-            f"&is_new_user={str(is_new_user).lower()}"
+            f"?token={jwt_token}&role={user.role}"
         )
         return RedirectResponse(url=redirect_url)
 
-    except HTTPException:
-        raise
+    except HTTPException as e:
+        print("=" * 60)
+        print("GOOGLE OAUTH HTTPException:", e.detail)
+        print("=" * 60)
+        db.rollback()
+        return RedirectResponse(url=f"{settings.FRONTEND_URL}{error_redirect_path}?error=google_auth_failed")
     except Exception as e:
-        # Error pe frontend login page pe wapas bhejo
-        return RedirectResponse(
-            url=f"{settings.FRONTEND_URL}/login?error=google_auth_failed"
-        )
-
-
+        import traceback
+        print("=" * 60)
+        print("GOOGLE OAUTH ERROR:", type(e).__name__, "-", str(e))
+        traceback.print_exc()
+        print("=" * 60)
+        db.rollback()
+        return RedirectResponse(url=f"{settings.FRONTEND_URL}{error_redirect_path}?error=google_auth_failed")
 # ════════════════════════════════════
 # COMMON ROUTES
 # ════════════════════════════════════
