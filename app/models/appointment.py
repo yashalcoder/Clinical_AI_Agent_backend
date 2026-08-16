@@ -1,6 +1,6 @@
 import uuid
 import enum
-from sqlalchemy import Column, String, Date, Time, DateTime, ForeignKey, UniqueConstraint, Enum as SAEnum
+from sqlalchemy import Index,Column, String, Date, Time, DateTime, ForeignKey, UniqueConstraint, Enum as SAEnum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
@@ -35,7 +35,12 @@ class Appointment(Base):
 
     # Prevent double booking
     __table_args__ = (
-        UniqueConstraint("doctor_id", "appointment_date", "slot_time", name="uq_doctor_slot"),
+        Index(
+            "uq_doctor_slot_active",
+            "doctor_id", "appointment_date", "slot_time",
+            unique=True,
+            postgresql_where=(status.in_(["pending", "confirmed"]))
+        ),
     )
 
     # Relationships

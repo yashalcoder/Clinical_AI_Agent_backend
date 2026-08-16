@@ -2,13 +2,23 @@ from sqlalchemy.orm import Session
 from fastapi import HTTPException
 from uuid import UUID
 from datetime import date, datetime, timedelta
-
+from sqlalchemy.exc import IntegrityError
 from app.models.appointment import Appointment, AppointmentStatus
 from app.models.patient import Patient
 from app.models.doctor import Doctor
 from app.models.reminder import Reminder, ReminderType, ReminderChannel
 from app.schemas.appointment import AppointmentCreate, AppointmentUpdate
-
+from app.services.doctor_service import get_available_slots
+import logging
+logger = logging.getLogger(__name__)
+# Valid status transitions — kaunsi state se kaunsi state mein ja sakte hain
+VALID_TRANSITIONS = {
+    AppointmentStatus.pending:   [AppointmentStatus.confirmed, AppointmentStatus.cancelled],
+    AppointmentStatus.confirmed: [AppointmentStatus.completed, AppointmentStatus.cancelled, AppointmentStatus.no_show],
+    AppointmentStatus.completed: [],   # terminal state — yahan se kahin nahi ja sakta
+    AppointmentStatus.cancelled: [],   # terminal state
+    AppointmentStatus.no_show:   [],   # terminal state
+}
 
 # ── Helper: Patient nikalo ──────────────────────────────────
 def get_patient_by_user(user_id: UUID, db: Session) -> Patient:
@@ -83,50 +93,71 @@ def validate_doctor_availability(doctor: Doctor, appointment_date: date) -> None
             detail=f"Doctor is not available on {day_name}"
         )
 
-
+def check_patient_not_double_booked(patient_id, appointment_date, slot_time, db):
+    existing = db.query(Appointment).filter(
+        Appointment.patient_id == patient_id,
+        Appointment.appointment_date == appointment_date,
+        Appointment.slot_time == slot_time,
+        Appointment.status.in_([AppointmentStatus.pending, AppointmentStatus.confirmed])
+    ).first()
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail="You already have an appointment at this time."
+        )
 # ── Helper: Reminders schedule karo ────────────────────────
 def schedule_reminders(appointment: Appointment, db: Session) -> None:
-    """
-    Appointment book hone ke baad
-    24h aur 2h ke reminders schedule karo
-    """
-    appt_datetime = datetime.combine(
-        appointment.appointment_date,
-        appointment.slot_time
-    )
+    appt_datetime = datetime.combine(appointment.appointment_date, appointment.slot_time)
 
     reminders_to_create = [
-        # 24 ghante pehle
+        # Turant confirmation (booking ke turant baad bhejne ke liye)
         Reminder(
             appointment_id=appointment.id,
-            type="24h",
+            type=ReminderType.confirm,
+            channel=ReminderChannel.whatsapp,
+            scheduled_at=datetime.utcnow()  # turant
+        ),
+        Reminder(
+            appointment_id=appointment.id,
+            type=ReminderType.h24,
             channel=ReminderChannel.whatsapp,
             scheduled_at=appt_datetime - timedelta(hours=24)
         ),
-        # 2 ghante pehle
         Reminder(
             appointment_id=appointment.id,
-            type="2h",
+            type=ReminderType.h2,
             channel=ReminderChannel.whatsapp,
             scheduled_at=appt_datetime - timedelta(hours=2)
         ),
     ]
 
     for reminder in reminders_to_create:
-        # Sirf future reminders add karo
-        if reminder.scheduled_at > datetime.utcnow():
+        if reminder.scheduled_at > datetime.utcnow() - timedelta(minutes=1):  # thoda buffer confirm ke liye
             db.add(reminder)
+def check_daily_booking_limit(patient_id, db, max_per_day=10):
+    today_start = datetime.combine(date.today(), datetime.min.time())
+    today_count = db.query(Appointment).filter(
+        Appointment.patient_id == patient_id,
+        Appointment.created_at >= today_start
+    ).count()
+    if today_count >= max_per_day:
+        raise HTTPException(status_code=429, detail="Daily booking limit reached")
+def validate_slot_time(doctor: Doctor, appointment_date: date, slot_time, db: Session) -> None:
+    """
+    slot_time: datetime.time object (payload se aata hai)
+    """
+    available_slots = get_available_slots(doctor.id, appointment_date, db)  # list of "HH:MM" strings
 
+    slot_time_str = slot_time.strftime("%H:%M")  # time object ko string mein convert karo comparison ke liye
 
+    if slot_time_str not in available_slots:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Slot {slot_time_str} is not available. Please choose from available slots."
+        )
 # ════════════════════════════════════════════════════════════
 # MAIN SERVICE FUNCTIONS
 # ════════════════════════════════════════════════════════════
-
-def book_appointment(
-    payload:  AppointmentCreate,
-    user_id:  UUID,
-    db:       Session
-) -> Appointment:
     """
     Appointment book karo
     
@@ -140,8 +171,11 @@ def book_appointment(
     7. Reminders schedule karo
     """
 
+def book_appointment(payload: AppointmentCreate, user_id: UUID, db: Session) -> Appointment:
     # 1. Patient nikalo
     patient = get_patient_by_user(user_id, db)
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient profile not found")
 
     # 2. Doctor check karo
     doctor = get_active_doctor(payload.doctor_id, db)
@@ -152,15 +186,19 @@ def book_appointment(
     # 4. Doctor us din available hai?
     validate_doctor_availability(doctor, payload.appointment_date)
 
-    # 5. Slot already booked nahi hona chahiye
-    check_slot_available(
-        payload.doctor_id,
-        payload.appointment_date,
-        payload.slot_time,
-        db
-    )
+  # Slot valid + available hai? (dono check ek function mein)
+    validate_slot_time(doctor, payload.appointment_date, payload.slot_time, db)
 
-    # 6. Appointment banao
+    # Extra safety layer (redundant ho sakta hai, lekin theek hai rakhna)
+    check_slot_available(payload.doctor_id, payload.appointment_date, payload.slot_time, db)
+
+    # 7. Patient khud kisi aur doctor ke paas isi time pe booked to nahi?
+    check_patient_not_double_booked(patient.id, payload.appointment_date, payload.slot_time, db)
+
+    # 8. Daily limit check (abuse prevention)
+    check_daily_booking_limit(patient.id, db)
+
+    # 9. Appointment banao
     appointment = Appointment(
         patient_id=patient.id,
         doctor_id=payload.doctor_id,
@@ -171,15 +209,28 @@ def book_appointment(
         status=AppointmentStatus.pending
     )
     db.add(appointment)
-    db.flush()  # ID generate karo
 
-    # 7. Reminders schedule karo
-    schedule_reminders(appointment, db)
+    try:
+        db.flush()  # DB unique constraint yahan race condition catch karega
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="This slot was just booked by someone else. Please choose another slot."
+        )
+
+    # 10. Reminders — fail ho to bhi booking continue rahe
+    try:
+        schedule_reminders(appointment, db)
+    except Exception as e:
+        logger.error(f"Reminder scheduling failed for appointment {appointment.id}: {e}")
 
     db.commit()
     db.refresh(appointment)
-    return appointment
 
+    logger.info(f"Appointment booked: patient={patient.id}, doctor={doctor.id}, date={payload.appointment_date}, slot={payload.slot_time}")
+
+    return appointment
 
 def get_patient_appointments(
     user_id: UUID,
@@ -239,6 +290,7 @@ def get_appointment_by_id(appointment_id: UUID, db: Session) -> Appointment:
     return appointment
 
 
+
 def update_appointment_status(
     appointment_id: UUID,
     payload:        AppointmentUpdate,
@@ -253,6 +305,7 @@ def update_appointment_status(
     - Patient: sirf cancel kar sakta hai (pending/confirmed)
     - Doctor: confirm, complete, no_show kar sakta hai
     - Admin: kuch bhi kar sakta hai
+    - Sab roles ke liye: status transition valid honi chahiye
     """
     appointment = get_appointment_by_id(appointment_id, db)
 
@@ -278,8 +331,22 @@ def update_appointment_status(
     # Doctor sirf apni appointments update kar sakta hai
     elif role == "doctor":
         doctor = db.query(Doctor).filter(Doctor.user_id == user_id).first()
+        if not doctor:
+            raise HTTPException(status_code=404, detail="Doctor profile not found")
         if appointment.doctor_id != doctor.id:
             raise HTTPException(status_code=403, detail="Access denied")
+
+    # Admin ke liye koi restriction nahi (role == "admin" case yahan gir jayega, aage badhega)
+
+    # ── Status transition validation — SAB roles (patient/doctor/admin) ke liye common ──
+    # Note: Admin ko bhi terminal states se transition allow nahi karna chahiye,
+    # data-integrity ke liye — agar admin ko override chahiye ho kabhi, alag "force" flag rakh sakte hain
+    allowed_next_states = VALID_TRANSITIONS.get(appointment.status, [])
+    if payload.status not in allowed_next_states:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot change status from '{appointment.status.value}' to '{payload.status.value}'"
+        )
 
     # Status update karo
     appointment.status = payload.status
@@ -290,63 +357,50 @@ def update_appointment_status(
     db.refresh(appointment)
     return appointment
 
-
 def reschedule_appointment(
     appointment_id:   UUID,
     new_date:         date,
-    new_slot:         str,
+    new_slot,   # time object
     user_id:          UUID,
     db:               Session
 ) -> Appointment:
-    """
-    Appointment reschedule karo
-    Naya slot available hona chahiye
-    """
     appointment = get_appointment_by_id(appointment_id, db)
 
-    # Sirf patient apni appointment reschedule kar sakta hai
     patient = get_patient_by_user(user_id, db)
     if appointment.patient_id != patient.id:
         raise HTTPException(status_code=403, detail="Access denied")
 
-    # Cancelled/completed appointment reschedule nahi ho sakti
-    if appointment.status in [
-        AppointmentStatus.cancelled,
-        AppointmentStatus.completed
-    ]:
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot reschedule cancelled or completed appointment"
-        )
+    if appointment.status in [AppointmentStatus.cancelled, AppointmentStatus.completed]:
+        raise HTTPException(status_code=400, detail="Cannot reschedule cancelled or completed appointment")
 
     # Naya date validate karo
     validate_appointment_date(new_date)
 
-    # Naya slot available hai?
-    check_slot_available(
-        appointment.doctor_id,
-        new_date,
-        new_slot,
-        db,
-        exclude_id=appointment_id  # apna slot exclude karo
-    )
+    # ── Ye 2 lines add karo ──
+    doctor = get_active_doctor(appointment.doctor_id, db)
+    validate_doctor_availability(doctor, new_date)
+    validate_slot_time(doctor, new_date, new_slot, db)
+    # ─────────────────────────
 
-    # Update karo
+    check_slot_available(appointment.doctor_id, new_date, new_slot, db, exclude_id=appointment_id)
+
     appointment.appointment_date = new_date
     appointment.slot_time        = new_slot
     appointment.status           = AppointmentStatus.pending
 
-    # Purane reminders delete karo
     from app.models.reminder import ReminderStatus
     db.query(Reminder).filter(
         Reminder.appointment_id == appointment_id,
         Reminder.status         == ReminderStatus.pending
     ).delete()
 
-    # Naye reminders banao
     schedule_reminders(appointment, db)
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="This slot was just booked. Please choose another.")
     db.refresh(appointment)
     return appointment
 
