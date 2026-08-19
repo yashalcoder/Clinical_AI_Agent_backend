@@ -2,7 +2,7 @@
   "services": {
     "api": {
       "root": "api",
-      "entrypoint": "index:app"
+      "entrypoint": "index.py"
     }
   },
   "rewrites": [
