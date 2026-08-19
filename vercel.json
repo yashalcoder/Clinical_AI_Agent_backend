@@ -1,7 +1,8 @@
 {
   "services": {
     "api": {
-      "entrypoint": "api/index.py"
+      "root": "api",
+      "entrypoint": "index.py"
     }
   }
 }
