@@ -60,3 +60,16 @@ def health():
         return {"status": "healthy", "database": "connected ✅"}
     except Exception as e:
         return {"status": "unhealthy", "database": f"❌ {str(e)}"}
+
+from fastapi import Request
+
+@app.get("/{path:path}")
+def catch_all(request: Request, path: str):
+    return {
+        "message": "Catch-all debugging route",
+        "path": path,
+        "url_path": request.url.path,
+        "scope_path": request.scope.get("path"),
+        "scope_root_path": request.scope.get("root_path"),
+        "headers": dict(request.headers)
+    }
