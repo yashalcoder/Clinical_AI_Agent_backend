@@ -32,11 +32,10 @@ app.add_middleware(
 )
 
 # Routes
-app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
-app.include_router(auth.router,     prefix="/api/auth",     tags=["Auth"])
-app.include_router(patients.router, prefix="/api/patients", tags=["Patients"])
-app.include_router(doctors.router,  prefix="/api/doctors",  tags=["Doctors"])
-app.include_router(appointments.router, prefix="/api/appointments", tags=["Appointments"])  # ← add
+app.include_router(auth.router, prefix="/auth", tags=["Auth"])
+app.include_router(patients.router, prefix="/patients", tags=["Patients"])
+app.include_router(doctors.router, prefix="/doctors", tags=["Doctors"])
+app.include_router(appointments.router, prefix="/appointments", tags=["Appointments"])
 # app.include_router(voice.router, prefix="/api/voice", tags=["Voice"])
 
 # Sab routes include karo
