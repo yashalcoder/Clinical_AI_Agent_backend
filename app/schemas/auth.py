@@ -7,11 +7,11 @@ from app.models.user import UserRole
 class RegisterRequest(BaseModel):
     email:     EmailStr
     firstName: str
-    lastName: Optional[str] = None
+    lastName:  Optional[str] = None
     phone:     str
     password:  str
     role:      UserRole
-
+    slug:      Optional[str] = None  # Slug incoming from frontend
 
 class LoginRequest(BaseModel):
     email:    EmailStr

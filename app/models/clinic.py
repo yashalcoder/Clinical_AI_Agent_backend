@@ -20,15 +20,15 @@ class Clinic(Base):
     payment_enabled = Column(Boolean)
     clinic_status = Column(Boolean)
 
-    countory = Column(String)
+    country = Column(String)
     payment_provider = Column(String)
 
     email = Column(String)
-    phone = Column(SmallInteger)
+    phone = Column(String(20))
     address = Column(String)
     city = Column(String)
     logo = Column(String)
-
+    slug = Column(String, nullable=False, unique=True)
     stripe_payment_id = Column(SmallInteger)
 
     created_at = Column(

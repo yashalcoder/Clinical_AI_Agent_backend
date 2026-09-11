@@ -6,7 +6,7 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.database import get_db
-
+from app.models import clinincAdmin,User
 # bcrypt setup
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -86,7 +86,25 @@ def get_current_patient(current_user=Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="Patients only")
     return current_user
 
-def get_current_admin(current_user=Depends(get_current_user)):
-    if current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="Admins only")
+
+def get_current_admin(current_user= Depends(get_current_user), db: Session = Depends(get_db)):
+    if current_user.role not in ("admin", "platform_admin"):
+        raise HTTPException(403, "Access denied")
+    
+    if current_user.role == "platform_admin":
+        return current_user, None  # no clinic restriction
+    
+    clinic_admin = db.query(clinincAdmin).filter(clinincAdmin.user_id == current_user.id).first()
+    if not clinic_admin:
+        raise HTTPException(404, "Clinic admin profile not found")
+    return current_user, clinic_admin.clinic_id
+
+def get_current_platform_admin(current_user: User = Depends(get_current_user)) -> User:
+    """
+    Role-check dependency — runs BEFORE the route body executes.
+    Only platform_admin (Super Admin) can pass through.
+    """
+    if current_user.role != "platform_admin":
+        raise HTTPException(status_code=403, detail="Access denied")
     return current_user
+ 

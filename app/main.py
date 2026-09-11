@@ -5,14 +5,18 @@ from sqlalchemy import text
 from app.core.config import settings
 from app.database import engine
 from app.routes import appointments, auth
-from app.routes import auth, patients, doctors
+from app.routes import auth, patients, doctors,superadmin,doctor_invite
+from app.Scheduler import start_scheduler
+
 app = FastAPI(
     title=settings.APP_NAME,
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc"
 )
-
+@app.on_event("startup")
+def startup_event():
+    start_scheduler()
 # Session middleware — Google OAuth ke liye zaroori
 app.add_middleware(
     SessionMiddleware,
@@ -36,7 +40,9 @@ app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
 app.include_router(auth.router,     prefix="/api/auth",     tags=["Auth"])
 app.include_router(patients.router, prefix="/api/patients", tags=["Patients"])
 app.include_router(doctors.router,  prefix="/api/doctors",  tags=["Doctors"])
+app.include_router(superadmin.router)
 app.include_router(appointments.router, prefix="/api/appointments", tags=["Appointments"])  # ← add
+app.include_router(doctor_invite.router, prefix="/api", tags=["Doctor Invites"])
 # app.include_router(voice.router, prefix="/api/voice", tags=["Voice"])
 
 # Sab routes include karo
@@ -72,4 +78,4 @@ def catch_all(request: Request, path: str):
         "scope_path": request.scope.get("path"),
         "scope_root_path": request.scope.get("root_path"),
         "headers": dict(request.headers)
-    }
+    }

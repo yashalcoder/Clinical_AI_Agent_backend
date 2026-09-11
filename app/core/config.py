@@ -29,6 +29,18 @@ class Settings(BaseSettings):
     APP_NAME:                    str = "ClinicFlow AI"
     DEBUG:                       bool = True
 
+    REDIS_URL: str = "redis://localhost:6379/0"
+    WHATSAPP_PROVIDER: str = "mock"   # "mock" | "meta" | "twilio" — baad mein switch karenge
+
+
+   
+    SMTP_HOST: str
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: str
+    SMTP_PASSWORD: str
+    SMTP_FROM_EMAIL: str
+
+    # ...
     class Config:
         env_file = ".env"
 

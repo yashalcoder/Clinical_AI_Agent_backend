@@ -9,6 +9,7 @@ from app.models.doctor import Doctor
 from app.models.reminder import Reminder, ReminderType, ReminderChannel
 from app.schemas.appointment import AppointmentCreate, AppointmentUpdate
 from app.services.doctor_service import get_available_slots
+from app.models.reminder import ReminderStatus
 import logging
 logger = logging.getLogger(__name__)
 # Valid status transitions — kaunsi state se kaunsi state mein ja sakte hain
@@ -290,7 +291,6 @@ def get_appointment_by_id(appointment_id: UUID, db: Session) -> Appointment:
     return appointment
 
 
-
 def update_appointment_status(
     appointment_id: UUID,
     payload:        AppointmentUpdate,
@@ -319,14 +319,11 @@ def update_appointment_status(
                 status_code=403,
                 detail="Patients can only cancel appointments"
             )
-        if appointment.status not in [
-            AppointmentStatus.pending,
-            AppointmentStatus.confirmed
-        ]:
-            raise HTTPException(
-                status_code=400,
-                detail="Cannot cancel — appointment is already completed or cancelled"
-            )
+        if payload.status == AppointmentStatus.cancelled:
+            db.query(Reminder).filter(
+                Reminder.appointment_id == appointment_id,
+                Reminder.status.in_([ReminderStatus.pending, ReminderStatus.queued])
+            ).update({"status": ReminderStatus.cancelled}, synchronize_session=False)
 
     # Doctor sirf apni appointments update kar sakta hai
     elif role == "doctor":

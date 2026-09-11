@@ -1,68 +1,125 @@
+import logging
 import secrets
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import RedirectResponse
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from app.database import get_db
-from app.models.user import User, UserRole
-from app.models.patient import Patient
-from app.models.doctor import Doctor
-from app.schemas.auth import (
-    RegisterRequest, LoginRequest, TokenResponse,
-    UserResponse, UpdateRoleRequest
-)
-from app.core.security import (
-    hash_password, verify_password,
-    create_access_token, get_current_user
-)
+
 from app.core.config import settings
+from app.core.security import (
+    create_access_token,
+    get_current_user,
+    hash_password,
+    verify_password,
+)
+from app.database import get_db
+from app.models.clinic import Clinic
+from app.models.doctor import Doctor
+from app.models.patient import Patient
+from app.models.user import User, UserRole
+from app.schemas.auth import (
+    LoginRequest,
+    RegisterRequest,
+    TokenResponse,
+    UpdateRoleRequest,
+    UserResponse,
+)
 from app.services.google_oauth import (
-    get_google_auth_url,
     exchange_code_for_token,
-    get_google_user_info
+    get_google_auth_url,
+    get_google_user_info,
 )
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
+VALID_ROLES = {"patient", "doctor", "clinic_admin"}
 
-# ── Helper: Patient/Doctor row banao ───────────────────────
-def create_role_profile(user: User, db: Session):
+
+# ── Helper Functions ──────────────────────────────────────────
+
+def resolve_clinic_by_slug(slug: Optional[str], role: str, db: Session) -> Optional[Clinic]:
     """
-    User ke role ke hisaab se
-    patients ya doctors table mein row banao
+    Validates and fetches the clinic by slug for patient and doctor roles.
+    Raises HTTPException if slug is missing or invalid.
+    """
+    if role in ("patient", "doctor"):
+        if not slug:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Clinic slug is required for {role} registration."
+            )
+        
+        clinic = db.query(Clinic).filter(Clinic.slug == slug).first()
+        if not clinic:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Clinic not found for the provided slug."
+            )
+        return clinic
+    return None
+
+def get_clinic_id_for_user(user: User, db: Session) -> Optional[int]:
+    """
+    Fetch the clinic_id associated with the user based on their role profile.
+    """
+    if getattr(user, "role", None) == UserRole.patient:
+        patient = db.query(Patient).filter(Patient.user_id == user.id).first()
+        return patient.clinic_id if patient else None
+
+    if getattr(user, "role", None) == UserRole.doctor:
+        doctor = db.query(Doctor).filter(Doctor.user_id == user.id).first()
+        return doctor.clinic_id if doctor else None
+
+    return None
+
+def generate_user_token(user: User, db: Session) -> str:
+    """
+    Generates a JWT access token containing sub, role, email, and clinic_id.
+    """
+    clinic_id = get_clinic_id_for_user(user, db)
+    token_payload = {
+        "sub": str(user.id),
+        "role": user.role,
+        "email": user.email,
+        "clinic_id": clinic_id
+    }
+    return create_access_token(data=token_payload)
+
+def create_role_profile(user: User, db: Session, clinic_id: Optional[int] = None):
+    """
+    Creates patient or doctor profile records mapped to a user and clinic.
     """
     if user.role == UserRole.patient:
         existing = db.query(Patient).filter(Patient.user_id == user.id).first()
         if not existing:
-            db.add(Patient(user_id=user.id))
+            db.add(Patient(user_id=user.id, clinic_id=clinic_id))
 
     elif user.role == UserRole.doctor:
         existing = db.query(Doctor).filter(Doctor.user_id == user.id).first()
         if not existing:
             db.add(Doctor(
                 user_id=user.id,
-                specialization="General"
+                specialization="General",
+                clinic_id=clinic_id
             ))
-
 
 # ════════════════════════════════════
 # EMAIL AUTH ROUTES
 # ════════════════════════════════════
-from sqlalchemy.exc import IntegrityError
-
-VALID_ROLES = {"patient", "doctor"}  # keep in sync with your schema/enum
 
 @router.post("/register", response_model=TokenResponse, status_code=201)
 def register(payload: RegisterRequest, db: Session = Depends(get_db)):
-    """Email se naya user register karo"""
+    """Register a new user via Email"""
 
-    # --- Normalize inputs ---
     email = payload.email.strip().lower()
     first_name = payload.firstName.strip()
     last_name = (payload.lastName or "").strip()
     role = (payload.role or "").strip().lower()
     phone = (payload.phone or "").strip()
+    slug = getattr(payload, "slug", None)
 
-    # --- Basic field validation ---
     if not first_name:
         raise HTTPException(status_code=400, detail="First name is required")
 
@@ -70,20 +127,22 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Invalid account role")
 
     if len(payload.password) < 8:
-        raise HTTPException(
-            status_code=400, detail="Password must be at least 8 characters"
-        )
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
 
-    # --- Duplicate email check (pre-check, not fully race-safe on its own) ---
+    # 1. Resolve clinic via slug for patients/doctors
+    clinic = resolve_clinic_by_slug(slug=slug, role=role, db=db)
+    resolved_clinic_id = clinic.clinic_id if clinic else None
+
     if db.query(User).filter(User.email == email).first():
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    # --- Optional: duplicate phone check ---
     if phone and db.query(User).filter(User.phone == phone).first():
         raise HTTPException(status_code=400, detail="Phone number already registered")
-    first_name = payload.firstName.strip()
-    last_name = (payload.lastName or "").strip()
+
     full_name = f"{first_name} {last_name}".strip()
+
+    # 2. Base User creation without clinic_id on User model (unless clinic_admin)
+  # User Model mein clinic_id nahi bhejni
     user = User(
         email=email,
         full_name=full_name,
@@ -91,55 +150,48 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
         role=role,
         password=hash_password(payload.password),
         auth_provider="email",
+        is_active=True
     )
 
     try:
         db.add(user)
         db.flush()
 
-        # Role profile banao
-        create_role_profile(user, db)
+        # 3. Attach clinic_id to Patient/Doctor profile table
+        create_role_profile(user, db, clinic_id=resolved_clinic_id)
 
         db.commit()
     except IntegrityError:
-        # Handles race condition: two concurrent signups with same email
         db.rollback()
         raise HTTPException(status_code=400, detail="Email already registered")
     except Exception:
         db.rollback()
-        raise HTTPException(
-            status_code=500, detail="Could not create account, please try again"
-        )
+        raise HTTPException(status_code=500, detail="Could not create account, please try again")
 
     db.refresh(user)
 
-    token = create_access_token(
-        data={"sub": str(user.id), "role": user.role, "email": user.email}
-    )
+    token = generate_user_token(user, db)
     return TokenResponse(
         access_token=token,
         role=user.role,
         user_id=user.id,
         full_name=user.full_name,
         is_new_user=True
-        # picture=user.picture
     )
 
-# POST /api/auth/login
+
 @router.post("/login", response_model=TokenResponse)
 def login(payload: LoginRequest, db: Session = Depends(get_db)):
-    """Email + password se login karo"""
+    """Login via email and password"""
 
     user = db.query(User).filter(User.email == payload.email).first()
 
-    # User nahi mila ya password galat
     if not user or not user.password:
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     if not verify_password(payload.password, user.password):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
-    # Google se register tha — password nahi set kiya
     if user.auth_provider == "google":
         raise HTTPException(
             status_code=400,
@@ -149,11 +201,7 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Account deactivated")
 
-    token = create_access_token(data={
-        "sub":   str(user.id),
-        "role":  user.role,
-        "email": user.email
-    })
+    token = generate_user_token(user, db)
 
     return TokenResponse(
         access_token=token,
@@ -168,38 +216,39 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
 # GOOGLE OAUTH ROUTES
 # ════════════════════════════════════
 
-# GET /api/auth/google
-# GET /api/auth/google
 @router.get("/google")
 def google_login(
     role: str = Query("patient"),
-    origin: str = Query("signup")  # "signup" ya "login"
+    origin: str = Query("signup"),
+    slug: Optional[str] = Query(None)
 ):
-    if role not in ("patient", "clinic"):
+    if role not in ("patient", "doctor", "clinic_admin"):
         role = "patient"
     if origin not in ("signup", "login"):
         origin = "signup"
 
-    # state mein role + origin dono pack karo
     raw_token = secrets.token_urlsafe(16)
-    state = f"{raw_token}:{role}:{origin}"
+    slug_str = slug if slug else ""
+    state = f"{raw_token}:{role}:{origin}:{slug_str}"
 
     auth_url = get_google_auth_url(state=state)
     return RedirectResponse(url=auth_url)
-import logging
-logger = logging.getLogger(__name__)
-# GET /api/auth/google/callback
+
 
 @router.get("/google/callback")
 async def google_callback(
-    code:  str = Query(...),
+    code: str = Query(...),
     state: str = Query(...),
-    db:    Session = Depends(get_db)
+    db: Session = Depends(get_db)
 ):
-    # State parse karo pehle hi — taaki error case mein bhi origin pata ho
+    slug = None
     try:
-        _, intended_role, origin = state.split(":", 2)
-        if intended_role not in ("patient", "doctor"):
+        parts = state.split(":")
+        _, intended_role, origin = parts[0], parts[1], parts[2]
+        if len(parts) > 3:
+            slug = parts[3] or None
+
+        if intended_role not in ("patient", "doctor", "clinic_admin"):
             intended_role = "patient"
         if origin not in ("signup", "login"):
             origin = "signup"
@@ -207,20 +256,20 @@ async def google_callback(
         intended_role = "patient"
         origin = "signup"
 
-    error_redirect_path = "/signup" if origin == "signup" else "/login"
+    error_redirect_path = f"/{slug}/signup" if (origin == "signup" and slug) else ("/signup" if origin == "signup" else "/login")
 
     try:
-        token_data   = await exchange_code_for_token(code)
+        token_data = await exchange_code_for_token(code)
         access_token = token_data.get("access_token")
 
         if not access_token:
             raise HTTPException(status_code=400, detail="Google token exchange failed")
 
         google_user = await get_google_user_info(access_token)
-        email     = google_user["email"].strip().lower()
+        email = google_user["email"].strip().lower()
         full_name = google_user["full_name"]
         google_id = google_user["google_id"]
-        picture   = google_user["picture"]
+        picture = google_user["picture"]
 
         if not google_user.get("email_verified"):
             raise HTTPException(status_code=400, detail="Google email not verified")
@@ -228,14 +277,15 @@ async def google_callback(
         user = db.query(User).filter(User.email == email).first()
 
         if not user:
-            # Account exist nahi karta
             if origin == "login":
-                # Login page se try kiya, lekin koi account hai hi nahi — signup karne bhejo
                 return RedirectResponse(
                     url=f"{settings.FRONTEND_URL}/login?error=account_not_found"
                 )
 
-            # Signup flow — naya user banao (role signup page se explicitly aaya hai)
+            # Resolve clinic_id from slug for new Google signup
+            clinic = resolve_clinic_by_slug(slug=slug, role=intended_role, db=db)
+            resolved_clinic_id = clinic.clinic_id if clinic else None
+
             user = User(
                 email=email,
                 full_name=full_name,
@@ -249,29 +299,22 @@ async def google_callback(
             db.add(user)
             db.flush()
 
-            if intended_role == "doctor":
-                db.add(Doctor(user_id=user.id, specialization="General"))
-            else:
-                db.add(Patient(user_id=user.id))
+            create_role_profile(user, db, clinic_id=resolved_clinic_id)
 
             db.commit()
             db.refresh(user)
 
         else:
-            # Existing user mila — chahe email se bana ho ya google se, ab link/refresh karo
             if not user.is_active:
                 return RedirectResponse(url=f"{settings.FRONTEND_URL}{error_redirect_path}?error=account_deactivated")
 
-            # Google ne is email ko verify kar diya hai, isliye safely link kar sakte hain
             user.google_id = google_id
-            user.picture   = picture
+            user.picture = picture
 
             db.commit()
             db.refresh(user)
 
-        jwt_token = create_access_token(data={
-            "sub": str(user.id), "role": user.role, "email": user.email
-        })
+        jwt_token = generate_user_token(user, db)
 
         redirect_url = (
             f"{settings.FRONTEND_URL}/auth/callback"
@@ -280,45 +323,35 @@ async def google_callback(
         return RedirectResponse(url=redirect_url)
 
     except HTTPException as e:
-        print("=" * 60)
-        print("GOOGLE OAUTH HTTPException:", e.detail)
-        print("=" * 60)
+        logger.error(f"GOOGLE OAUTH HTTPException: {e.detail}")
         db.rollback()
         return RedirectResponse(url=f"{settings.FRONTEND_URL}{error_redirect_path}?error=google_auth_failed")
     except Exception as e:
-        import traceback
-        print("=" * 60)
-        print("GOOGLE OAUTH ERROR:", type(e).__name__, "-", str(e))
-        traceback.print_exc()
-        print("=" * 60)
+        logger.exception("GOOGLE OAUTH ERROR")
         db.rollback()
         return RedirectResponse(url=f"{settings.FRONTEND_URL}{error_redirect_path}?error=google_auth_failed")
+
+
 # ════════════════════════════════════
 # COMMON ROUTES
 # ════════════════════════════════════
 
-# GET /api/auth/me
 @router.get("/me", response_model=UserResponse)
 def get_me(current_user: User = Depends(get_current_user)):
-    """Apni info dekho"""
+    """Fetch profile info for currently logged-in user"""
     return current_user
 
 
-# PUT /api/auth/update-role
 @router.put("/update-role", response_model=UserResponse)
 def update_role(
-    payload:      UpdateRoleRequest,
-    current_user: User    = Depends(get_current_user),
-    db:           Session = Depends(get_db)
+    payload: UpdateRoleRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
-    """
-    Google se pehli baar aane ke baad role select karo
-    Frontend is_new_user=true ho to yeh call kare
-    """
+    """Set role and profile for first-time Google signups"""
     current_user.role = payload.role
     db.flush()
 
-    # Role ke hisaab se profile banao
     create_role_profile(current_user, db)
 
     db.commit()
@@ -326,20 +359,19 @@ def update_role(
     return current_user
 
 
-# POST /api/auth/change-password
 @router.post("/change-password")
 def change_password(
     old_password: str,
     new_password: str,
-    current_user: User    = Depends(get_current_user),
-    db:           Session = Depends(get_db)
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
-    """Password badlo — sirf email users ke liye"""
+    """Change password for email users"""
 
     if current_user.auth_provider == "google":
         raise HTTPException(
             status_code=400,
-            detail="Google account ka password change nahi ho sakta"
+            detail="Google account password cannot be changed"
         )
 
     if not verify_password(old_password, current_user.password):
