@@ -6,7 +6,7 @@ from app.core.config import settings
 from app.database import engine
 from app.routes import appointments, auth
 from app.routes import auth, patients, doctors,superadmin,doctor_invite
-from app.Scheduler import start_scheduler
+# from app.Scheduler import start_scheduler
 
 app = FastAPI(
     title=settings.APP_NAME,
