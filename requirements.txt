@@ -9,7 +9,7 @@ APScheduler==3.10.4
 async-timeout==5.0.1
 attrs==26.1.0
 Authlib==1.7.2
-bcrypt==5.0.0
+bcrypt==4.0.1
 certifi==2026.6.17
 cffi==2.0.0
 charset-normalizer==3.4.7
