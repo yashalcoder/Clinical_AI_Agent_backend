@@ -14,9 +14,9 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc"
 )
-@app.on_event("startup")
-def startup_event():
-    start_scheduler()
+# @app.on_event("startup")
+# def startup_event():
+#     start_scheduler()
 # Session middleware — Google OAuth ke liye zaroori
 app.add_middleware(
     SessionMiddleware,
