@@ -5,18 +5,54 @@ from sqlalchemy import text
 from app.core.config import settings
 from app.database import engine
 from app.routes import appointments, auth
-from app.routes import auth, patients, doctors,superadmin,doctor_invite
-# from app.Scheduler import start_scheduler
+from app.routes import auth, patients, doctors,superadmin,doctor_invite,ws_notifications,clinic
+import asyncio
+from contextlib import asynccontextmanager
+from app.ws.redis_listener import listen_for_notifications
+from app.Scheduler import start_scheduler
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    print("🚀 FASTAPI STARTUP")
 
+    start_scheduler()
+
+    print("🚀 Starting Redis notification listener...")
+
+    redis_task = asyncio.create_task(
+        listen_for_notifications()
+    )
+
+    print("✅ Redis listener task created")
+
+    try:
+        yield
+
+    finally:
+        print("🛑 FASTAPI SHUTDOWN")
+
+        redis_task.cancel()
+
+        try:
+            await redis_task
+        except asyncio.CancelledError:
+            print("🛑 Redis listener stopped")
 app = FastAPI(
     title=settings.APP_NAME,
     version="1.0.0",
     docs_url="/docs",
-    redoc_url="/redoc"
+    redoc_url="/redoc",
+    lifespan=lifespan,
 )
 # @app.on_event("startup")
-# def startup_event():
+# async def startup_event():
+#     print("🚀 FASTAPI STARTUP")
+
 #     start_scheduler()
+
+#     print("🚀 Starting Redis notification listener task...")
+#     asyncio.create_task(listen_for_notifications())
+
+#     print("✅ Redis listener task created")
 # Session middleware — Google OAuth ke liye zaroori
 app.add_middleware(
     SessionMiddleware,
@@ -43,6 +79,8 @@ app.include_router(doctors.router,  prefix="/api/doctors",  tags=["Doctors"])
 app.include_router(superadmin.router)
 app.include_router(appointments.router, prefix="/api/appointments", tags=["Appointments"])  # ← add
 app.include_router(doctor_invite.router, prefix="/api", tags=["Doctor Invites"])
+app.include_router(ws_notifications.router,prefix="/api/notifications")
+app.include_router(clinic.router,prefix="/api/clinic")
 # app.include_router(voice.router, prefix="/api/voice", tags=["Voice"])
 
 # Sab routes include karo

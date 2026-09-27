@@ -63,6 +63,49 @@ def get_all_doctors(db: Session, specialization: str = None):
         })
     return result
 
+def get_all_doctors_by_clinicId(
+    db: Session,
+    specialization: str = None,
+    clinic_id: int = None
+):
+    query = (
+        db.query(Doctor, User)
+        .join(User, Doctor.user_id == User.id)
+        .filter(
+            Doctor.is_active == True,
+            User.is_active == True,
+            Doctor.clinic_id == clinic_id
+        )
+    )
+
+    if specialization:
+        query = query.filter(
+            Doctor.specialization.ilike(f"%{specialization}%")
+        )
+
+    doctors = query.all()
+
+    result = []
+
+    for doctor, user in doctors:
+        result.append({
+            "id": doctor.id,
+            "user_id": doctor.user_id,
+            "clinic_id": doctor.clinic_id,
+            "full_name": user.full_name,
+            "email": user.email,
+            "phone": user.phone,
+            "picture": user.picture,
+            "specialization": doctor.specialization,
+            "qualification": doctor.qualification,
+            "fee": float(doctor.fee) if doctor.fee else 0,
+            "available_days": doctor.available_days,
+            "slot_duration": doctor.slot_duration,
+            "start_time": str(doctor.start_time),
+            "end_time": str(doctor.end_time),
+        })
+
+    return result
 
 def get_available_slots(
     doctor_id: UUID,

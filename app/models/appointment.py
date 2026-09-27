@@ -5,7 +5,6 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from app.database import Base
-
 class AppointmentStatus(str, enum.Enum):
     pending   = "pending"
     confirmed = "confirmed"
@@ -44,5 +43,6 @@ class Appointment(Base):
     )
 
     # Relationships
+    
     reminders = relationship("Reminder", backref="appointment")
     record    = relationship("MedicalRecord", backref="appointment", uselist=False)

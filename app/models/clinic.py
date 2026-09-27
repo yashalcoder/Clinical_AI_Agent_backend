@@ -29,8 +29,8 @@ class Clinic(Base):
     city = Column(String)
     logo = Column(String)
     slug = Column(String, nullable=False, unique=True)
-    stripe_payment_id = Column(SmallInteger)
 
+    stripe_payment_id = Column(String, nullable=True)
     created_at = Column(
         TIMESTAMP(timezone=True),
         server_default=func.now(),

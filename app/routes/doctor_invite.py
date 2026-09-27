@@ -51,19 +51,19 @@ def create_doctor_invite(
     """Clinic admin invites a new doctor to their clinic — no self-signup for doctors."""
 
     email = payload.email.strip().lower()
-
+   
     # Already a user with this email?
     if db.query(User).filter(User.email == email).first():
         raise HTTPException(status_code=400, detail="This email is already registered")
 
     # Already an unexpired pending invite for this email + clinic?
-    existing = db.query(DoctorInvite).filter(
-        DoctorInvite.email == email,
-        DoctorInvite.clinic_id == clinic_admin.clinic_id,
-        DoctorInvite.status == DoctorInviteStatus.pending,
-    ).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="An invite is already pending for this email")
+    # existing = db.query(DoctorInvite).filter(
+    #     DoctorInvite.email == email,
+    #     DoctorInvite.clinic_id == clinic_admin.clinic_id,
+    #     DoctorInvite.status == DoctorInviteStatus.pending,
+    # ).first()
+    # if existing:
+    #     raise HTTPException(status_code=400, detail="An invite is already pending for this email")
 
     invite = DoctorInvite(
         clinic_id=clinic_admin.clinic_id,
@@ -118,7 +118,7 @@ def accept_invite(
 ):
     # Validate invite
     invite = _get_valid_invite_or_404(token, db)
-
+    print("invite",invite);
     # Password validation
     if len(payload.password) < 8:
         raise HTTPException(
@@ -200,7 +200,7 @@ def accept_invite(
         # ════════════════════════════════════════════════════
         # 2. Create Doctor profile
         # ════════════════════════════════════════════════════
-
+        print("Clinic_id",invite.clinic_id)
         doctor = Doctor(
             user_id=user.id,
 
@@ -290,3 +290,4 @@ def _get_valid_invite_or_404(token: str, db: Session) -> DoctorInvite:
         raise HTTPException(status_code=400, detail="This invite has expired")
 
     return invite
+

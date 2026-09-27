@@ -17,7 +17,8 @@ from app.services.doctor_service import (
     get_doctor_by_id,
     get_all_doctors,
     get_available_slots,
-    update_doctor_profile
+    update_doctor_profile,
+    get_all_doctors_by_clinicId
 )
 
 router = APIRouter()
@@ -37,7 +38,26 @@ def list_doctors(
     """
     return get_all_doctors(db, specialization=specialization)
 
+# ── GET /api/doctors/ ───────────────────────────────────────
+@router.get("/clinicDoctors")
+def list_doctors_by_clinicId(
 
+    clinic_id: int = Query(...),
+    specialization: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    print("🔥 CLINIC ID RECEIVED:", clinic_id)
+
+    doctors = get_all_doctors_by_clinicId(
+        db=db,
+        specialization=specialization,
+        clinic_id=clinic_id
+    )
+
+    
+
+    return doctors
 # ── GET /api/doctors/me ─────────────────────────────────────
 @router.get("/me", response_model=DoctorResponse)
 def get_my_profile(
@@ -124,3 +144,4 @@ def deactivate_doctor(
     doctor.is_active = False
     db.commit()
     return {"message": "Doctor deactivated successfully"}
+

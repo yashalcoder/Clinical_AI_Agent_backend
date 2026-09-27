@@ -7,14 +7,18 @@ from pydantic import BaseModel, EmailStr
 class CreateClinicRequest(BaseModel):
     clinic_name: str
     city: Optional[str] = None
+    country: Optional[str] = None
     address: Optional[str] = None
+    email: Optional[EmailStr] = None        # clinic's own email
     whatsapp_number: Optional[str] = None
-
+ 
     admin_name: Optional[str] = None
     admin_email: EmailStr
-
+ 
     plan: Optional[str] = "Growth"   # "Starter" | "Growth" | "Pro / Network"
-
+ 
+    payment_enabled: Optional[bool] = False
+    payment_provider: Optional[str] = None   # "stripe" | "paypal" | None
 
 # ── Response: returned right after a clinic is created ──────────────────────
 # Matches what AddClinicModal's success screen expects.

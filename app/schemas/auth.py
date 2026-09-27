@@ -12,6 +12,14 @@ class RegisterRequest(BaseModel):
     password:  str
     role:      UserRole
     slug:      Optional[str] = None  # Slug incoming from frontend
+    # Patient fields
+    date_of_birth: Optional[str] = None
+    gender: Optional[str] = None
+    blood_group: Optional[str] = None
+    whatsapp_no: Optional[str] = None
+    address: Optional[str] = None
+    emergency_contact_name: Optional[str] = None
+    emergency_contact_phone: Optional[str] = None
 
 class LoginRequest(BaseModel):
     email:    EmailStr

@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
 from uuid import UUID
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta,time
 from sqlalchemy.exc import IntegrityError
 from app.models.appointment import Appointment, AppointmentStatus
 from app.models.patient import Patient
@@ -11,6 +11,8 @@ from app.schemas.appointment import AppointmentCreate, AppointmentUpdate
 from app.services.doctor_service import get_available_slots
 from app.models.reminder import ReminderStatus
 import logging
+from sqlalchemy.orm import joinedload
+from app.services.notification_service import notify
 logger = logging.getLogger(__name__)
 # Valid status transitions — kaunsi state se kaunsi state mein ja sakte hain
 VALID_TRANSITIONS = {
@@ -39,7 +41,14 @@ def get_active_doctor(doctor_id: UUID, db: Session) -> Doctor:
         raise HTTPException(status_code=404, detail="Doctor not found or inactive")
     return doctor
 
-
+def get_doctor(doctor_id: UUID, db: Session) -> Doctor:
+    doctor = db.query(Doctor).filter(
+        Doctor.id == doctor_id,
+        
+    ).first()
+    if not doctor:
+        raise HTTPException(status_code=404, detail="Doctor not found or inactive")
+    return doctor
 # ── Helper: Slot available hai? ────────────────────────────
 def check_slot_available(
     doctor_id:        UUID,
@@ -207,10 +216,10 @@ def book_appointment(payload: AppointmentCreate, user_id: UUID, db: Session) -> 
         slot_time=payload.slot_time,
         reason=payload.reason,
         booked_via=payload.booked_via,
-        status=AppointmentStatus.pending
+        status=AppointmentStatus.confirmed
     )
     db.add(appointment)
-
+    
     try:
         db.flush()  # DB unique constraint yahan race condition catch karega
     except IntegrityError:
@@ -225,8 +234,35 @@ def book_appointment(payload: AppointmentCreate, user_id: UUID, db: Session) -> 
         schedule_reminders(appointment, db)
     except Exception as e:
         logger.error(f"Reminder scheduling failed for appointment {appointment.id}: {e}")
+      # 11. Doctor ko notification
+    notify(
+        user_id=doctor.user_id,
+         clinic_id=doctor.clinic_id,
+        type="appointment_booked",
+        title="New appointment",
+        body=f"{patient.user.full_name} booked a slot with you",
+        link="/doctor/appointments",
+        db=db,
+    )
+    
+    # 12. Patient ko bhi notification chahiye ho to
+    notify(
+        user_id=user_id,
+        clinic_id=patient.clinic_id,
+        type="appointment_confirmed",
+        title="Appointment confirmed",
+        body=(
+            f"Your appointment with Dr. {doctor.user.full_name} "
+            f"has been confirmed."
+        ),
+        link="/patient/appointments",
+        db=db,
+    )
 
+    # 13. Appointment + notifications + reminders
+    # ek hi transaction mein commit
     db.commit()
+    
     db.refresh(appointment)
 
     logger.info(f"Appointment booked: patient={patient.id}, doctor={doctor.id}, date={payload.appointment_date}, slot={payload.slot_time}")
@@ -241,17 +277,21 @@ def get_patient_appointments(
     """Patient ki appointments lo"""
     patient = get_patient_by_user(user_id, db)
 
-    query = db.query(Appointment).filter(
+    query = db.query(Appointment).options(
+        joinedload(Appointment.doctor).joinedload(Doctor.user)
+    ).filter(
         Appointment.patient_id == patient.id
     )
 
     if status:
         query = query.filter(Appointment.status == status)
-
-    return query.order_by(
+    appointments = query.order_by(
         Appointment.appointment_date.desc(),
         Appointment.slot_time.desc()
     ).all()
+
+  
+    return appointments
 
 
 def get_doctor_appointments(
@@ -357,7 +397,7 @@ def update_appointment_status(
 def reschedule_appointment(
     appointment_id:   UUID,
     new_date:         date,
-    new_slot,   # time object
+    new_slot,         
     user_id:          UUID,
     db:               Session
 ) -> Appointment:
@@ -383,7 +423,7 @@ def reschedule_appointment(
 
     appointment.appointment_date = new_date
     appointment.slot_time        = new_slot
-    appointment.status           = AppointmentStatus.pending
+    appointment.status           = AppointmentStatus.confirmed
 
     from app.models.reminder import ReminderStatus
     db.query(Reminder).filter(

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from uuid import UUID
-from datetime import date
+from datetime import date,time
 from typing import Optional
 
 from app.database import get_db
@@ -156,7 +156,7 @@ def update_status(
 def reschedule(
     appointment_id: UUID,
     new_date:       date = Query(..., description="New date: 2024-12-25"),
-    new_slot:       str  = Query(..., description="New time: 10:30"),
+    new_slot:       time  = Query(..., description="New time: 10:30"),
     current_user:   User    = Depends(get_current_patient),
     db:             Session = Depends(get_db)
 ):
@@ -168,8 +168,8 @@ def reschedule(
         appointment_id,
         new_date,
         new_slot,
-        current_user.id,
-        db
+        user_id=current_user.id,
+        db=db,
     )
 
 

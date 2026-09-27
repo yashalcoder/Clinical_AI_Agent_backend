@@ -17,6 +17,8 @@ from app.database import get_db
 from app.models.clinic import Clinic
 from app.models.doctor import Doctor
 from app.models.patient import Patient
+from app.models.appointment import Appointment
+
 from app.models.user import User, UserRole
 from app.schemas.auth import (
     LoginRequest,
@@ -25,6 +27,7 @@ from app.schemas.auth import (
     UpdateRoleRequest,
     UserResponse,
 )
+from app.schemas.appointment import AppointmentStatus
 from app.services.google_oauth import (
     exchange_code_for_token,
     get_google_auth_url,
@@ -34,7 +37,7 @@ from app.services.google_oauth import (
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-VALID_ROLES = {"patient", "doctor", "clinic_admin"}
+VALID_ROLES = {"patient", "doctor", "admin"}
 
 
 # ── Helper Functions ──────────────────────────────────────────
@@ -87,14 +90,20 @@ def generate_user_token(user: User, db: Session) -> str:
     }
     return create_access_token(data=token_payload)
 
-def create_role_profile(user: User, db: Session, clinic_id: Optional[int] = None):
+def create_role_profile(user: User, db: Session, clinic_id: Optional[int] = None,payload:Optional[int]=None):
     """
     Creates patient or doctor profile records mapped to a user and clinic.
     """
     if user.role == UserRole.patient:
         existing = db.query(Patient).filter(Patient.user_id == user.id).first()
         if not existing:
-            db.add(Patient(user_id=user.id, clinic_id=clinic_id))
+            db.add(Patient(user_id=user.id, clinic_id=clinic_id, date_of_birth=payload.date_of_birth,
+            gender=payload.gender,
+            blood_group=payload.blood_group,
+            whatsapp_no=payload.whatsapp_no,
+            address=payload.address,
+            emergency_contact_name=payload.emergency_contact_name,
+            emergency_contact_phone=payload.emergency_contact_phone,))
 
     elif user.role == UserRole.doctor:
         existing = db.query(Doctor).filter(Doctor.user_id == user.id).first()
@@ -158,7 +167,13 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
         db.flush()
 
         # 3. Attach clinic_id to Patient/Doctor profile table
-        create_role_profile(user, db, clinic_id=resolved_clinic_id)
+        create_role_profile(
+            user,
+            db,
+            clinic_id=resolved_clinic_id,
+            payload=payload
+        )
+
 
         db.commit()
     except IntegrityError:
@@ -222,7 +237,7 @@ def google_login(
     origin: str = Query("signup"),
     slug: Optional[str] = Query(None)
 ):
-    if role not in ("patient", "doctor", "clinic_admin"):
+    if role not in ("patient", "doctor", "admin"):
         role = "patient"
     if origin not in ("signup", "login"):
         origin = "signup"
@@ -248,7 +263,7 @@ async def google_callback(
         if len(parts) > 3:
             slug = parts[3] or None
 
-        if intended_role not in ("patient", "doctor", "clinic_admin"):
+        if intended_role not in ("patient", "doctor", "admin"):
             intended_role = "patient"
         if origin not in ("signup", "login"):
             origin = "signup"
@@ -340,8 +355,73 @@ async def google_callback(
 def get_me(current_user: User = Depends(get_current_user)):
     """Fetch profile info for currently logged-in user"""
     return current_user
+@router.get("/dashboard")
+def get_dashboard(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    # Find Patient belonging to logged-in User
+    patient = (
+        db.query(Patient)
+        .filter(Patient.user_id == current_user.id)
+        .first()
+    )
 
+    appointment = None
 
+    if patient:
+        appointment = (
+            db.query(Appointment)
+            .filter(
+                Appointment.patient_id == patient.id,
+                Appointment.status == AppointmentStatus.confirmed,
+            )
+            .order_by(
+                Appointment.appointment_date.asc(),
+                Appointment.slot_time.asc(),
+            )
+            .first()
+        )
+
+  
+
+    doctor_data = None
+
+    if appointment and appointment.doctor:
+        doctor_data = {
+            "id": str(appointment.doctor.id),
+            "name": appointment.doctor.user.full_name,
+            "specialization": appointment.doctor.specialization,
+        }
+
+    return {
+        "user": {
+            "id": str(current_user.id),
+            "email": current_user.email,
+            "full_name": current_user.full_name,
+            "phone": current_user.phone,
+            "role": current_user.role,
+            "picture": current_user.picture,
+        },
+
+        "next_appointment": (
+            {
+                "id": str(appointment.id),
+                "date": appointment.appointment_date.isoformat(),
+                "time": appointment.slot_time.strftime("%H:%M:%S"),
+                "status": appointment.status.value,
+                "doctor": doctor_data,
+            }
+            if appointment
+            else None
+        ),
+
+        "appointments": [],
+        "medications": [],
+        "reminders": [],
+        "medical_activity": [],
+        "billing": {},
+    }
 @router.put("/update-role", response_model=UserResponse)
 def update_role(
     payload: UpdateRoleRequest,

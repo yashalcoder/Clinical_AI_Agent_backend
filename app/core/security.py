@@ -6,7 +6,8 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.database import get_db
-from app.models import clinincAdmin,User
+from app.models.user import User
+from app.models.clinincAdmin import ClinicAdmin
 # bcrypt setup
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -94,7 +95,7 @@ def get_current_admin(current_user= Depends(get_current_user), db: Session = Dep
     if current_user.role == "platform_admin":
         return current_user, None  # no clinic restriction
     
-    clinic_admin = db.query(clinincAdmin).filter(clinincAdmin.user_id == current_user.id).first()
+    clinic_admin = db.query(ClinicAdmin).filter(ClinicAdmin.user_id == current_user.id).first()
     if not clinic_admin:
         raise HTTPException(404, "Clinic admin profile not found")
     return current_user, clinic_admin.clinic_id
