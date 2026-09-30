@@ -11,31 +11,31 @@ from contextlib import asynccontextmanager
 from app.ws.redis_listener import listen_for_notifications
 from app.Scheduler import start_scheduler
 @asynccontextmanager
-async def lifespan(app: FastAPI):
-    print("🚀 FASTAPI STARTUP")
+# async def lifespan(app: FastAPI):
+#     print("🚀 FASTAPI STARTUP")
 
-    start_scheduler()
+#     start_scheduler()
 
-    print("🚀 Starting Redis notification listener...")
+#     print("🚀 Starting Redis notification listener...")
 
-    redis_task = asyncio.create_task(
-        listen_for_notifications()
-    )
+#     redis_task = asyncio.create_task(
+#         listen_for_notifications()
+#     )
 
-    print("✅ Redis listener task created")
+#     print("✅ Redis listener task created")
 
-    try:
-        yield
+#     try:
+#         yield
 
-    finally:
-        print("🛑 FASTAPI SHUTDOWN")
+#     finally:
+#         print("🛑 FASTAPI SHUTDOWN")
 
-        redis_task.cancel()
+#         redis_task.cancel()
 
-        try:
-            await redis_task
-        except asyncio.CancelledError:
-            print("🛑 Redis listener stopped")
+#         try:
+#             await redis_task
+#         except asyncio.CancelledError:
+#             print("🛑 Redis listener stopped")
 app = FastAPI(
     title=settings.APP_NAME,
     version="1.0.0",
