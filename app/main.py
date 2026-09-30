@@ -8,9 +8,9 @@ from app.routes import appointments, auth
 from app.routes import auth, patients, doctors,superadmin,doctor_invite,ws_notifications,clinic
 import asyncio
 from contextlib import asynccontextmanager
-from app.ws.redis_listener import listen_for_notifications
-from app.Scheduler import start_scheduler
-@asynccontextmanager
+# from app.ws.redis_listener import listen_for_notifications
+# from app.Scheduler import start_scheduler
+# @asynccontextmanager
 # async def lifespan(app: FastAPI):
 #     print("🚀 FASTAPI STARTUP")
 
@@ -41,7 +41,7 @@ app = FastAPI(
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
-    lifespan=lifespan,
+    # lifespan=lifespan,
 )
 # @app.on_event("startup")
 # async def startup_event():
