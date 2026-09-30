@@ -1,5 +1,6 @@
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
+from typing import Optional
 from uuid import UUID
 from datetime import date, datetime, timedelta,time
 from sqlalchemy.exc import IntegrityError
@@ -184,6 +185,7 @@ def validate_slot_time(doctor: Doctor, appointment_date: date, slot_time, db: Se
 def book_appointment(payload: AppointmentCreate, user_id: UUID, db: Session) -> Appointment:
     # 1. Patient nikalo
     patient = get_patient_by_user(user_id, db)
+    
     if not patient:
         raise HTTPException(status_code=404, detail="Patient profile not found")
 
@@ -268,7 +270,53 @@ def book_appointment(payload: AppointmentCreate, user_id: UUID, db: Session) -> 
     logger.info(f"Appointment booked: patient={patient.id}, doctor={doctor.id}, date={payload.appointment_date}, slot={payload.slot_time}")
 
     return appointment
+def get_clinic_appointments(
+    clinic_id: int,
+    status: Optional[str],
+    db: Session
+):
+    """Clinic ki sari appointments with patient aur doctor names"""
 
+    query = (
+        db.query(Appointment)
+        .join(Doctor, Appointment.doctor_id == Doctor.id)
+        .options(
+            joinedload(Appointment.doctor).joinedload(Doctor.user),
+            joinedload(Appointment.patient).joinedload(Patient.user),
+        )
+        .filter(Doctor.clinic_id == clinic_id)
+    )
+
+    if status:
+        query = query.filter(Appointment.status == status)
+
+    appointments = (
+        query
+        .order_by(
+            Appointment.appointment_date.desc(),
+            Appointment.slot_time.desc()
+        )
+        .all()
+    )
+
+    return [
+        {
+            "id": appointment.id,
+            "patient_id": appointment.patient_id,
+            "doctor_id": appointment.doctor_id,
+
+            "patient_name": appointment.patient.user.full_name,
+            "doctor_name": appointment.doctor.user.full_name,
+
+            "appointment_date": appointment.appointment_date,
+            "slot_time": appointment.slot_time,
+            "status": appointment.status,
+            "reason": appointment.reason,
+            "notes": appointment.notes,
+            "booked_via": appointment.booked_via,
+        }
+        for appointment in appointments
+    ]
 def get_patient_appointments(
     user_id: UUID,
     status:  str,

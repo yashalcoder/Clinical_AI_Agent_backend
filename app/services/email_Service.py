@@ -5,12 +5,24 @@ from email.message import EmailMessage
 
 from app.core.config import settings
 
+
 def send_clinic_admin_welcome_email(
     admin_email: str,
     admin_name: str,
     clinic_name: str,
     temp_password: str,
 ):
+    print("=" * 60)
+    print("📧 STARTING CLINIC ADMIN EMAIL")
+    print(f"Admin Email: {admin_email}")
+    print(f"Admin Name: {admin_name}")
+    print(f"Clinic: {clinic_name}")
+    print(f"SMTP Host: {settings.SMTP_HOST}")
+    print(f"SMTP Port: {settings.SMTP_PORT}")
+    print(f"SMTP Username: {settings.SMTP_USERNAME}")
+    print(f"SMTP From: {settings.SMTP_FROM_EMAIL}")
+    print("=" * 60)
+
     message = EmailMessage()
 
     message["Subject"] = f"Welcome to ClinicFlow AI - {clinic_name}"
@@ -42,15 +54,53 @@ ClinicFlow AI
 """
     )
 
-    with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT) as server:
-        server.starttls()
-        server.login(
-            settings.SMTP_USERNAME,
-            settings.SMTP_PASSWORD,
-        )
+    try:
+        print("📧 Connecting to SMTP server...")
 
-        server.send_message(message)
+        with smtplib.SMTP(
+            settings.SMTP_HOST,
+            settings.SMTP_PORT
+        ) as server:
 
+            print("✅ SMTP connection established")
+
+            print("🔐 Starting TLS...")
+            server.starttls()
+
+            print("🔐 Logging into SMTP...")
+            server.login(
+                settings.SMTP_USERNAME,
+                settings.SMTP_PASSWORD,
+            )
+
+            print("✅ SMTP login successful")
+
+            print(f"📨 Sending email to {admin_email}...")
+
+            server.send_message(message)
+
+            print("✅ EMAIL SENT SUCCESSFULLY")
+            print(f"📩 Recipient: {admin_email}")
+
+        print("=" * 60)
+
+        return True
+
+    except smtplib.SMTPAuthenticationError as e:
+        print("❌ SMTP AUTHENTICATION FAILED")
+        print(f"Error: {e}")
+        raise
+
+    except smtplib.SMTPException as e:
+        print("❌ SMTP ERROR")
+        print(f"Error: {e}")
+        raise
+
+    except Exception as e:
+        print("❌ EMAIL SENDING FAILED")
+        print(f"Error type: {type(e).__name__}")
+        print(f"Error: {e}")
+        raise
 def send_doctor_invite_email(
     email: str,
     token: str,

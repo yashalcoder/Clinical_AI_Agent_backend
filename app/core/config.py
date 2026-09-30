@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     APP_NAME:                    str = "ClinicFlow AI"
     DEBUG:                       bool = True
 
-    REDIS_URL: str = "redis://localhost:6379/0"
+    REDIS_URL: str = ""
     WHATSAPP_PROVIDER: str = "mock"   # "mock" | "meta" | "twilio" — baad mein switch karenge
 
 

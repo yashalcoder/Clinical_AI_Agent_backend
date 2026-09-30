@@ -188,7 +188,6 @@ def admin_dashboard(
         .filter(Doctor.clinic_id == clinic_id)
         .all()
     )
-
     doctor_count = len(doctors)
 
     # ---------------------------------------------------------
@@ -245,6 +244,7 @@ def admin_dashboard(
             {
                 "id": doctor.id,
                 "user_id": doctor.user_id,
+                "full_name":doctor.user.full_name,
                 "specialization": doctor.specialization,
                 "qualification": doctor.qualification,
                 "fee": doctor.fee,

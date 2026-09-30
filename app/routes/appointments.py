@@ -24,7 +24,8 @@ from app.services.appointment_service import (
     get_appointment_by_id,
     update_appointment_status,
     reschedule_appointment,
-    get_all_appointments
+    get_all_appointments,
+    get_clinic_appointments,
 )
 
 router = APIRouter()
@@ -62,6 +63,23 @@ def my_appointments(
     """Patient apni sab appointments dekhe"""
     return get_patient_appointments(current_user.id, status, db)
 
+# ── GET /api/appointments/clinic ────────────────────────────────
+@router.get("/clinic")
+def clinic_appointments(
+    clinic_id: int,
+    status: Optional[str] = Query(
+        None,
+        description="pending|confirmed|cancelled|completed|no_show"
+    ),
+    db: Session = Depends(get_db)
+):
+    """Clinic ki sari appointments dekhe"""
+
+    return get_clinic_appointments(
+        clinic_id,
+        status,
+        db
+    )
 
 # ── GET /api/appointments/doctor ────────────────────────────
 @router.get("/doctor", response_model=list[AppointmentResponse])
