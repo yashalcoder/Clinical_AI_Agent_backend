@@ -45,7 +45,7 @@ def list_doctors_by_clinicId(
     clinic_id: int = Query(...),
     specialization: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    # current_user: User = Depends(get_current_user)//for now commented bcz we are working for one clinic only and portfolio pr begaar login ka doctors dekhaana
 ):
     print("🔥 CLINIC ID RECEIVED:", clinic_id)
 
@@ -54,9 +54,6 @@ def list_doctors_by_clinicId(
         specialization=specialization,
         clinic_id=clinic_id
     )
-
-    
-
     return doctors
 # ── GET /api/doctors/me ─────────────────────────────────────
 @router.get("/me", response_model=DoctorResponse)
@@ -88,7 +85,8 @@ def update_my_profile(
 def available_slots(
     doctor_id:    UUID,
     date:         date    = Query(..., description="Format: 2024-12-25"),
-    current_user: User    = Depends(get_current_user),
+    # current_user: User    = Depends(get_current_user),
+    # for now commented bcz we are working for one clinic only and portfolio pr begaar login ka doctors dekhaana
     db:           Session = Depends(get_db)
 ):
     """

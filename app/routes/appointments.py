@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from uuid import UUID
 from datetime import date,time
 from typing import Optional
-
+from app.schemas.publicBooking import PublicAppointmentCreate
 from app.database import get_db
 from app.models.user import User
 from app.schemas.appointment import (
@@ -11,6 +11,7 @@ from app.schemas.appointment import (
     AppointmentUpdate,
     AppointmentResponse
 )
+from app.services.public_booking_service import public_book_appointment_service
 from app.core.security import (
     get_current_user,
     get_current_patient,
@@ -52,7 +53,16 @@ def book(
     """
     return book_appointment(payload, current_user.id, db)
 
-
+@router.post("/public/bookAppointment")
+def public_book_appointment(
+    payload: PublicAppointmentCreate,
+    db: Session = Depends(get_db),
+):
+    return public_book_appointment_service(
+        payload=payload,
+        clinic_id=payload.clinic_id,
+        db=db,
+    )
 # ── GET /api/appointments/my ────────────────────────────────
 @router.get("/my", response_model=list[AppointmentResponse])
 def my_appointments(

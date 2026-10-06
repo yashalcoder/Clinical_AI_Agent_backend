@@ -102,41 +102,60 @@ ClinicFlow AI
         print(f"Error: {e}")
         raise
 def send_doctor_invite_email(
-    email: str,
-    token: str,
-    clinic_name: str,
-):
-    invite_url = f"{settings.FRONTEND_URL}/invite/{token}"
+        email: str,
+        token: str,
+        clinic_name: str,
+    ):
+        invite_url = f"{settings.FRONTEND_URL}/invite/{token}"
 
-    message = EmailMessage()
+        message = EmailMessage()
 
-    message["Subject"] = f"You've been invited to {clinic_name} - ClinicFlow AI"
-    message["From"] = settings.SMTP_FROM_EMAIL
-    message["To"] = email
+        message["Subject"] = f"You've been invited to {clinic_name} - ClinicFlow AI"
+        message["From"] = settings.SMTP_FROM_EMAIL
+        message["To"] = email
 
-    message.set_content(
-        f"""
-Hello Doctor,
+        message.set_content(
+            f"""
+    Hello Doctor,
 
-You have been invited to join {clinic_name} as a doctor on ClinicFlow AI.
+    You have been invited to join {clinic_name} as a doctor on ClinicFlow AI.
 
-Please use the link below to accept your invitation and create your account:
+    Please use the link below to accept your invitation and create your account:
 
-{invite_url}
+    {invite_url}
 
-This invitation will expire in 7 days.
+    This invitation will expire in 7 days.
 
-If you did not expect this invitation, you can safely ignore this email.
+    If you did not expect this invitation, you can safely ignore this email.
 
-Regards,
-ClinicFlow AI
-"""
-    )
-
-    with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT) as server:
-        server.starttls()
-        server.login(
-            settings.SMTP_USERNAME,
-            settings.SMTP_PASSWORD,
+    Regards,
+    ClinicFlow AI
+    """
         )
-        server.send_message(message)
+
+        print(f"📧 Sending doctor invite email to: {email}")
+        print(f"📨 SMTP server: {settings.SMTP_HOST}:{settings.SMTP_PORT}")
+
+        try:
+            with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT) as server:
+                print("🔌 Connected to SMTP server")
+
+                server.starttls()
+                print("🔐 STARTTLS successful")
+
+                server.login(
+                    settings.SMTP_USERNAME,
+                    settings.SMTP_PASSWORD,
+                )
+                print("✅ SMTP login successful")
+
+                response = server.send_message(message)
+
+                print(f"📤 Email sent successfully to: {email}")
+                print(f"📨 SMTP response: {response}")
+
+        except Exception as e:
+            print(f"❌ Failed to send email to {email}")
+            print(f"❌ Email error: {e}")
+
+            raise
