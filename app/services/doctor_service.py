@@ -153,18 +153,38 @@ def get_available_slots(
     available = [s for s in all_slots if s not in booked_times]
     return available
 
+from fastapi import HTTPException
+
+USER_FIELDS = {"full_name", "email", "phone"}
+
 
 def update_doctor_profile(
     doctor_id: UUID,
     payload:   DoctorUpdate,
-    db:        Session
+    db:        Session,
 ) -> Doctor:
-    """Doctor profile update karo"""
     doctor = get_doctor_by_id(doctor_id, db)
+    user   = doctor.user
 
     update_data = payload.model_dump(exclude_unset=True)
+
+    # email unique check
+    new_email = update_data.get("email")
+    if new_email and new_email != user.email:
+        exists = (
+            db.query(User)
+            .filter(User.email == new_email, User.id != user.id)
+            .first()
+        )
+        if exists:
+            raise HTTPException(status_code=400, detail="Email already in use")
+
+    # split: users vs doctors
     for field, value in update_data.items():
-        setattr(doctor, field, value)
+        if field in USER_FIELDS:
+            setattr(user, field, value)
+        else:
+            setattr(doctor, field, value)
 
     db.commit()
     db.refresh(doctor)

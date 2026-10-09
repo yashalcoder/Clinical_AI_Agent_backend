@@ -8,7 +8,7 @@ from app.models.appointment import Appointment, AppointmentStatus
 from app.models.patient import Patient
 from app.models.doctor import Doctor
 from app.models.reminder import Reminder, ReminderType, ReminderChannel
-from app.schemas.appointment import AppointmentCreate, AppointmentUpdate
+from app.schemas.appointment import AppointmentCreate, AppointmentUpdate,AdminAppointmentEditSchema
 from app.services.doctor_service import get_available_slots
 from app.models.reminder import ReminderStatus
 import logging
@@ -304,10 +304,11 @@ def get_clinic_appointments(
             "id": appointment.id,
             "patient_id": appointment.patient_id,
             "doctor_id": appointment.doctor_id,
-
+            "patient_email":appointment.patient.user.email,
             "patient_name": appointment.patient.user.full_name,
             "doctor_name": appointment.doctor.user.full_name,
-
+             "contact_no":appointment.patient.user.phone,
+             "whatsap_no":appointment.patient.whatsapp_no,
             "appointment_date": appointment.appointment_date,
             "slot_time": appointment.slot_time,
             "status": appointment.status,
@@ -435,6 +436,7 @@ def update_appointment_status(
 
     # Status update karo
     appointment.status = payload.status
+    
     if payload.notes:
         appointment.notes = payload.notes
 
@@ -512,3 +514,119 @@ def get_all_appointments(
         Appointment.appointment_date.desc(),
         Appointment.slot_time.desc()
     ).offset(skip).limit(limit).all()
+
+
+
+from sqlalchemy.orm import Session, joinedload
+from fastapi import HTTPException
+
+def edit_appointment_admin_service(
+    appointment_id: UUID, 
+    payload: AdminAppointmentEditSchema, 
+    db: Session
+):
+    # 1. Fetch appointment with eagerly loaded relationships
+    appointment = (
+        db.query(Appointment)
+        .options(
+            joinedload(Appointment.patient).joinedload(Patient.user),
+
+        )
+        .filter(Appointment.id == appointment_id)
+        .first()
+    )
+
+    if not appointment:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+
+    # 2. Update Patient & User details
+    if appointment.patient:
+        patient = appointment.patient
+        
+        # Update Patient fields
+        whatsapp_val = getattr(payload, 'whatsapp_no', None) or getattr(payload, 'whatsapp_number', None)
+        if whatsapp_val is not None:
+            patient.whatsapp_no = whatsapp_val
+            db.add(patient)
+
+        # Update User fields (full_name, contact_no, email)
+        if patient.user:
+            user = patient.user
+            
+            name_val = getattr(payload, 'full_name', None) or getattr(payload, 'patient_full_name', None)
+            if name_val is not None:
+                user.full_name = name_val
+
+            contact_val = getattr(payload, 'contact_no', None) or getattr(payload, 'contact_number', None)
+            if contact_val is not None:
+                user.phone_number = contact_val
+
+            if payload.email is not None:
+                user.email = payload.email
+
+            db.add(user)
+
+    # 3. Update Appointment Details
+    if payload.reason is not None:
+        appointment.reason = payload.reason
+    if payload.notes is not None:
+        appointment.notes = payload.notes
+    if payload.doctor_id is not None:
+        appointment.doctor_id = payload.doctor_id
+    if payload.appointment_date is not None:
+        appointment.appointment_date = payload.appointment_date
+    if payload.slot_time is not None:
+        appointment.slot_time = str(payload.slot_time)
+
+    db.add(appointment)
+
+    # 4. Commit and Re-query complete object
+    try:
+        db.commit()
+
+        # Re-fetch the updated appointment with loaded nested relations for response
+        updated_appointment = (
+            db.query(Appointment)
+            .options(
+                joinedload(Appointment.patient).joinedload(Patient.user),
+               
+            )
+            .filter(Appointment.id == appointment_id)
+            .first()
+        )
+        print("udated appointment",updated_appointment);
+        return updated_appointment
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Failed to update appointment: {str(e)}"
+        )
+
+def delete_appointment(
+    appointment_id,
+    payload,
+    current_user_id,
+    current_user_role,
+    db
+):
+    appointment = (
+        db.query(Appointment)
+        .filter(Appointment.id == appointment_id)
+        .first()
+    )
+
+    if not appointment:
+        raise HTTPException(
+            status_code=404,
+            detail="Appointment not found"
+        )
+    # Your delete logic here
+    db.delete(appointment)
+    db.commit()
+
+    return {
+        "message": "Appointment deleted successfully",
+        "appointment_id": str(appointment_id)
+    }

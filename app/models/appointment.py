@@ -44,5 +44,5 @@ class Appointment(Base):
 
     # Relationships
     
-    reminders = relationship("Reminder", backref="appointment")
+    reminders = relationship("Reminder", backref="appointment",cascade="all, delete-orphan",passive_deletes=True,)
     record    = relationship("MedicalRecord", backref="appointment", uselist=False)

@@ -252,6 +252,9 @@ def admin_dashboard(
                 "qualification": doctor.qualification,
                 "fee": doctor.fee,
                 "is_active": doctor.is_active,
+                "available_days":doctor.available_days,
+                "start_time":doctor.start_time,
+                "end_time":doctor.end_time
             }
             for doctor in doctors
         ],

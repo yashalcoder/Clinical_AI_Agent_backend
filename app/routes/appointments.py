@@ -9,7 +9,8 @@ from app.models.user import User
 from app.schemas.appointment import (
     AppointmentCreate,
     AppointmentUpdate,
-    AppointmentResponse
+    AppointmentResponse,
+    AdminAppointmentEditSchema
 )
 from app.services.public_booking_service import public_book_appointment_service
 from app.core.security import (
@@ -27,6 +28,8 @@ from app.services.appointment_service import (
     reschedule_appointment,
     get_all_appointments,
     get_clinic_appointments,
+    edit_appointment_admin_service,
+    delete_appointment
 )
 
 router = APIRouter()
@@ -201,6 +204,26 @@ def reschedule(
     )
 
 
+
+
+# ── Update Appointment Status Dynamic Endpoint ───────────────────────────
+@router.patch("/{appointment_id}/status")
+def update_status(
+    appointment_id: UUID,
+    payload: AppointmentUpdate,  # Frontend se { "status": "confirmed" } body aayegi
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Appointment status update karo dynamically (pending, confirmed, completed, cancelled)
+    """
+    return update_appointment_status(
+        appointment_id=appointment_id,
+        payload=payload,
+        user_id=current_user.id,
+        user_role=current_user.role,
+        db=db
+    )
 # ── DELETE /api/appointments/{id} ───────────────────────────
 @router.delete("/{appointment_id}")
 def cancel_appointment(
@@ -216,10 +239,28 @@ def cancel_appointment(
     from app.models.appointment import AppointmentStatus
 
     payload = AppointmentUpdate(status=AppointmentStatus.cancelled)
-    return update_appointment_status(
+    return delete_appointment(
         appointment_id,
         payload,
         current_user.id,
         current_user.role,
         db
+    )
+
+# edit appointment(patient info + appointment)
+@router.put("/{appointment_id}", response_model=AppointmentResponse)
+def edit_appointment_admin(
+    appointment_id: UUID,
+    payload: AdminAppointmentEditSchema,
+    current_user: User = Depends(get_current_admin), # or clinic staff/admin role
+    db: Session = Depends(get_db)
+):
+    """
+    Admin/Clinic Staff edit endpoint: Updates patient info,
+    visit details, doctor assignment, and date/time.
+    """
+    return edit_appointment_admin_service(
+        appointment_id=appointment_id,
+        payload=payload,
+        db=db
     )
